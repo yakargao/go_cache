@@ -46,7 +46,7 @@ typora-copy-images-to: assets
 
 - HttpPoll：实现通过URL获取Group名 ->查找group ->通过url获取key ->获取缓存值->缓存通过response body返回
 
-**第四天**：一致性哈希，从单节点走向分布式节点
+**一致性哈希，从单节点走向分布式节点**：
 
 - 简单的mod的hash算法看起来没问题，但是在缓存服务器节点数改变时容易造成缓存雪崩
 
