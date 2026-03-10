@@ -2,6 +2,9 @@
 package cache
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -156,12 +159,13 @@ type MetricsStats struct {
 
 // String 返回可读的统计信息
 func (s MetricsStats) String() string {
-	return formatStats(s)
+	return s.format()
 }
 
-// formatStats 格式化统计信息
-func formatStats(stats MetricsStats) string {
-	return formatStats(stats)
+// format 格式化统计信息
+func (s MetricsStats) format() string {
+	return fmt.Sprintf("Hits: %d, Misses: %d, HitRate: %.2f%%, Items: %d, Size: %d/%d bytes", 
+		s.Hits, s.Misses, s.HitRate*100, s.CurrentItems, s.CurrentSize, s.MaxSize)
 }
 
 // InstrumentedGroup 带监控的缓存组
@@ -217,7 +221,8 @@ func (ig *InstrumentedGroup) ServeMetrics(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(stats)
 }
 
-// Prometheus metrics (optional)
+// Prometheus metrics (optional) - 需要安装prometheus客户端库
+/*
 var (
 	promHits = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -250,3 +255,4 @@ func init() {
 	prometheus.MustRegister(promMisses)
 	prometheus.MustRegister(promSize)
 }
+*/

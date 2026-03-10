@@ -104,7 +104,7 @@ func (f *FastLRU) Add(key string, value Value) {
 		shard.nBytes += int64(value.Len()) - int64(kv.value.Len())
 		kv.value = value
 	} else {
-		ele := shard.ll.PushFront(&entry{key, value})
+		ele := shard.ll.PushFront(&Entry{key, value})
 		shard.cache[key] = ele
 		shard.nBytes += int64(len(key)) + int64(value.Len())
 	}
@@ -121,10 +121,10 @@ func (f *FastLRU) removeOldest(shard *lruShard) {
 	if ele != nil {
 		shard.ll.Remove(ele)
 		kv := ele.Value.(*entry)
-		delete(shard.cache, kv.key)
-		shard.nBytes -= int64(len(kv.key)) + int64(kv.value.Len())
+		delete(shard.cache, kv.Key)
+		shard.nBytes -= int64(len(kv.Key)) + int64(kv.value.Len())
 		if shard.OnEvicted != nil {
-			shard.OnEvicted(kv.key, kv.value)
+			shard.OnEvicted(kv.Key, kv.value)
 		}
 	}
 }

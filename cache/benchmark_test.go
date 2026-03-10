@@ -3,6 +3,7 @@ package cache
 
 import (
 	"testing"
+	"time"
 )
 
 func BenchmarkCacheGet(b *testing.B) {
