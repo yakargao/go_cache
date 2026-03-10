@@ -9,7 +9,7 @@ import (
 	"container/list"
 )
 
-//day1：非并发安全的cache结构体
+// day1：非并发安全的cache结构体
 type Cache struct {
 	maxBytes  int64      //最大内存
 	nBytes    int64      //已使用的内存
@@ -23,7 +23,7 @@ type entry struct { //list的节点，保存key的目的是方便删除对应的
 	value Value
 }
 
-//Value interface
+// Value interface
 type Value interface {
 	Len() int
 }
@@ -37,7 +37,7 @@ func New(maxBytes int64, onEvicted func(string, Value)) *Cache {
 	}
 }
 
-//查找
+// 查找
 func (c *Cache) Get(key string) (value Value, ok bool) {
 	if ele, ok := c.cache[key]; ok {
 		c.ll.MoveToFront(ele) //双向链表队首队尾是相对的，约定front为队尾
@@ -47,7 +47,7 @@ func (c *Cache) Get(key string) (value Value, ok bool) {
 	return
 }
 
-//删除
+// 删除
 func (c *Cache) RemoveOldest() {
 	ele := c.ll.Back()
 	if ele != nil {
@@ -61,7 +61,7 @@ func (c *Cache) RemoveOldest() {
 	}
 }
 
-//add
+// add
 func (c *Cache) Add(key string, value Value) {
 	if ele, ok := c.cache[key]; ok {
 		c.ll.MoveToFront(ele)
@@ -79,7 +79,7 @@ func (c *Cache) Add(key string, value Value) {
 	}
 }
 
-//Len the number of cache entries
+// Len the number of cache entries
 func (c *Cache) Len() int {
 	return c.ll.Len()
 }

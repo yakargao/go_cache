@@ -6,9 +6,9 @@
 package cache
 
 import (
-	"cache/consistenthash"
 	"fmt"
-	"io/ioutil"
+	"go_cache/cache/consistenthash"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -21,8 +21,8 @@ const (
 	defaultReplicas = 50
 )
 
-//day3: http通信的核心数据结构
-//day5:添加节点选择的功能，实现 PeerPicker 接口。
+// day3: http通信的核心数据结构
+// day5:添加节点选择的功能，实现 PeerPicker 接口。
 type HTTPPool struct {
 	self        string //记录自己的地址，包含主机名/ip和端口
 	basePath    string //节点间通讯地址的前缀
@@ -68,7 +68,7 @@ func (h *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write(view.ByteSlice()) //缓存值作为 httpResponse 的 body 返回
 }
 
-//实例化一致性哈希算法，添加传入的节点
+// 实例化一致性哈希算法，添加传入的节点
 func (h *HTTPPool) Set(peers ...string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -99,7 +99,7 @@ type httpGetter struct {
 	baseURL string
 }
 
-//获取远程节点的内容，并返回[]byte
+// 获取远程节点的内容，并返回[]byte
 func (h *httpGetter) Get(group string, key string) ([]byte, error) {
 	u := fmt.Sprintf("%v%v%v", h.baseURL, url.QueryEscape(group), url.QueryEscape(key))
 	res, err := http.Get(u)
@@ -110,9 +110,9 @@ func (h *httpGetter) Get(group string, key string) ([]byte, error) {
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("server returned: %v", res.Status)
 	}
-	bytes, err := ioutil.ReadAll(res.Body)
+	bytes, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading respose body : %v", err)
+		return nil, fmt.Errorf("reading response body: %v", err)
 	}
 	return bytes, nil
 }

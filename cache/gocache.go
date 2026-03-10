@@ -94,10 +94,13 @@ func (g *Group) load(key string) (value ByteView, err error) {
 		}
 		return g.getLocally(key) //分布式场景下会调用 getFromPeer 从其他节点获取
 	})
+	if err != nil {
+		return ByteView{}, err
+	}
 	if viewi != nil {
 		return viewi.(ByteView), nil
 	}
-	return
+	return ByteView{}, fmt.Errorf("key not found: %s", key)
 }
 
 // 回调用户自定义数据源获取数据的方法

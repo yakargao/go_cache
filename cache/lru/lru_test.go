@@ -7,7 +7,7 @@ import (
 
 type String string
 
-//implement the interface of Value
+// implement the interface of Value
 func (s String) Len() int {
 	return len(s)
 }

@@ -11,7 +11,7 @@ import (
 	"strconv"
 )
 
-//Hash函数,支持自定义
+// Hash函数,支持自定义
 type Hash func(data []byte) uint32
 
 type Map struct {
@@ -33,7 +33,7 @@ func New(replicas int, fn Hash) *Map {
 	return m
 }
 
-//添加节点，把节点名进行hash
+// 添加节点，把节点名进行hash
 func (m *Map) Add(keys ...string) {
 	for _, key := range keys {
 		for i := 0; i < m.replicas; i++ {
@@ -45,7 +45,7 @@ func (m *Map) Add(keys ...string) {
 	sort.Ints(m.keys) //排序成环
 }
 
-//缓存名进行hash，获取对应的机器
+// 缓存名进行hash，获取对应的机器
 func (m *Map) Get(key string) string {
 	if len(m.keys) == 0 {
 		return ""

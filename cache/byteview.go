@@ -9,12 +9,12 @@ type ByteView struct {
 	b []byte
 }
 
-//Len 返回byteView长度,实现value接口
+// Len 返回byteView长度,实现value接口
 func (v ByteView) Len() int {
 	return len(v.b)
 }
 
-//ByteSlice返回正式数据的拷贝，只读防止修改
+// ByteSlice返回正式数据的拷贝，只读防止修改
 func (v ByteView) ByteSlice() []byte {
 	return cloneBytes(v.b)
 }
