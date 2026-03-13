@@ -36,3 +36,11 @@ func (c *cache) get(key string) (value ByteView, ok bool) {
 	}
 	return
 }
+
+// Cache 接口 - 用于持久化模块
+type Cache interface {
+	Get(key string) (interface{}, bool)
+	Set(key string, value interface{})
+	Del(key string)
+	Len() int
+}

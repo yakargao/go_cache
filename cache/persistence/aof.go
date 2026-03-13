@@ -4,11 +4,9 @@ package persistence
 import (
 	"bufio"
 	"compress/gzip"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"go_cache/cache"
-	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"

@@ -1,19 +1,17 @@
-// 监控指标 - 添加Prometheus指标支持
+// 监控指标 - 优化版：使用原子操作替代锁
 package cache
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// Metrics 缓存指标
+// Metrics 缓存指标 - 使用原子操作优化
 type Metrics struct {
-	mu sync.RWMutex
-	
-	// 计数器
+	// 使用原子操作替代 mutex
 	hits        int64
 	misses      int64
 	evictions   int64
@@ -21,13 +19,13 @@ type Metrics struct {
 	peerMisses  int64
 	peerErrors  int64
 	
-	// 计时器
-	totalGetTime   time.Duration
-	totalPeerTime  time.Duration
+	// 使用原子操作
+	totalGetTime   int64 // 存储纳秒
 	getCount       int64
+	totalPeerTime  int64
 	peerGetCount   int64
 	
-	// 当前状态
+	// 这些仍然需要锁，因为是整体更新
 	currentItems   int64
 	currentSize    int64
 	maxSize        int64
@@ -40,121 +38,119 @@ func NewMetrics(maxSize int64) *Metrics {
 	}
 }
 
-// RecordHit 记录缓存命中
+// RecordHit 记录缓存命中 - 原子操作
 func (m *Metrics) RecordHit() {
-	m.mu.Lock()
-	m.hits++
-	m.mu.Unlock()
+	atomic.AddInt64(&m.hits, 1)
 }
 
-// RecordMiss 记录缓存未命中
+// RecordMiss 记录缓存未命中 - 原子操作
 func (m *Metrics) RecordMiss() {
-	m.mu.Lock()
-	m.misses++
-	m.mu.Unlock()
+	atomic.AddInt64(&m.misses, 1)
 }
 
-// RecordEviction 记录缓存淘汰
+// RecordEviction 记录缓存淘汰 - 原子操作
 func (m *Metrics) RecordEviction() {
-	m.mu.Lock()
-	m.evictions++
-	m.mu.Unlock()
+	atomic.AddInt64(&m.evictions, 1)
 }
 
-// RecordPeerHit 记录从对等节点命中
+// RecordPeerHit 记录从对等节点命中 - 原子操作
 func (m *Metrics) RecordPeerHit() {
-	m.mu.Lock()
-	m.peerHits++
-	m.mu.Unlock()
+	atomic.AddInt64(&m.peerHits, 1)
 }
 
-// RecordPeerMiss 记录从对等节点未命中
+// RecordPeerMiss 记录从对等节点未命中 - 原子操作
 func (m *Metrics) RecordPeerMiss() {
-	m.mu.Lock()
-	m.peerMisses++
-	m.mu.Unlock()
+	atomic.AddInt64(&m.peerMisses, 1)
 }
 
-// RecordPeerError 记录对等节点错误
+// RecordPeerError 记录对等节点错误 - 原子操作
 func (m *Metrics) RecordPeerError() {
-	m.mu.Lock()
-	m.peerErrors++
-	m.mu.Unlock()
+	atomic.AddInt64(&m.peerErrors, 1)
 }
 
-// RecordGetTime 记录Get操作耗时
+// RecordGetTime 记录Get操作耗时 - 原子操作
 func (m *Metrics) RecordGetTime(duration time.Duration) {
-	m.mu.Lock()
-	m.totalGetTime += duration
-	m.getCount++
-	m.mu.Unlock()
+	atomic.AddInt64(&m.totalGetTime, duration.Nanoseconds())
+	atomic.AddInt64(&m.getCount, 1)
 }
 
-// RecordPeerGetTime 记录从对等节点获取耗时
+// RecordPeerGetTime 记录从对等节点获取耗时 - 原子操作
 func (m *Metrics) RecordPeerGetTime(duration time.Duration) {
-	m.mu.Lock()
-	m.totalPeerTime += duration
-	m.peerGetCount++
-	m.mu.Unlock()
+	atomic.AddInt64(&m.totalPeerTime, duration.Nanoseconds())
+	atomic.AddInt64(&m.peerGetCount, 1)
 }
 
-// UpdateSize 更新缓存大小
+// UpdateSize 更新缓存大小 - 原子操作
 func (m *Metrics) UpdateSize(items int64, size int64) {
-	m.mu.Lock()
-	m.currentItems = items
-	m.currentSize = size
-	m.mu.Unlock()
+	atomic.StoreInt64(&m.currentItems, items)
+	atomic.StoreInt64(&m.currentSize, size)
 }
 
-// Stats 获取当前统计信息
+// Stats 获取当前统计信息 - 优化：减少锁竞争
 func (m *Metrics) Stats() MetricsStats {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	
+	// 原子读取所有计数器
 	stats := MetricsStats{
-		Hits:        m.hits,
-		Misses:      m.misses,
-		Evictions:   m.evictions,
-		PeerHits:    m.peerHits,
-		PeerMisses:  m.peerMisses,
-		PeerErrors:  m.peerErrors,
-		CurrentItems: m.currentItems,
-		CurrentSize:  m.currentSize,
-		MaxSize:     m.maxSize,
+		Hits:         atomic.LoadInt64(&m.hits),
+		Misses:       atomic.LoadInt64(&m.misses),
+		Evictions:    atomic.LoadInt64(&m.evictions),
+		PeerHits:     atomic.LoadInt64(&m.peerHits),
+		PeerMisses:   atomic.LoadInt64(&m.peerMisses),
+		PeerErrors:   atomic.LoadInt64(&m.peerErrors),
+		CurrentItems: atomic.LoadInt64(&m.currentItems),
+		CurrentSize:  atomic.LoadInt64(&m.currentSize),
+		MaxSize:      m.maxSize,
 	}
 	
 	// 计算命中率
-	total := m.hits + m.misses
+	total := stats.Hits + stats.Misses
 	if total > 0 {
-		stats.HitRate = float64(m.hits) / float64(total)
+		stats.HitRate = float64(stats.Hits) / float64(total)
 	}
 	
 	// 计算平均耗时
-	if m.getCount > 0 {
-		stats.AvgGetTime = m.totalGetTime / time.Duration(m.getCount)
+	getCount := atomic.LoadInt64(&m.getCount)
+	if getCount > 0 {
+		totalTime := atomic.LoadInt64(&m.totalGetTime)
+		stats.AvgGetTime = time.Duration(totalTime / getCount)
 	}
 	
-	if m.peerGetCount > 0 {
-		stats.AvgPeerTime = m.totalPeerTime / time.Duration(m.peerGetCount)
+	peerGetCount := atomic.LoadInt64(&m.peerGetCount)
+	if peerGetCount > 0 {
+		totalPeerTime := atomic.LoadInt64(&m.totalPeerTime)
+		stats.AvgPeerTime = time.Duration(totalPeerTime / peerGetCount)
 	}
 	
 	return stats
 }
 
+// ResetStats 重置统计信息
+func (m *Metrics) ResetStats() {
+	atomic.StoreInt64(&m.hits, 0)
+	atomic.StoreInt64(&m.misses, 0)
+	atomic.StoreInt64(&m.evictions, 0)
+	atomic.StoreInt64(&m.peerHits, 0)
+	atomic.StoreInt64(&m.peerMisses, 0)
+	atomic.StoreInt64(&m.peerErrors, 0)
+	atomic.StoreInt64(&m.totalGetTime, 0)
+	atomic.StoreInt64(&m.getCount, 0)
+	atomic.StoreInt64(&m.totalPeerTime, 0)
+	atomic.StoreInt64(&m.peerGetCount, 0)
+}
+
 // MetricsStats 指标统计信息
 type MetricsStats struct {
-	Hits        int64
-	Misses      int64
-	Evictions   int64
-	PeerHits    int64
-	PeerMisses  int64
-	PeerErrors  int64
-	HitRate     float64
-	AvgGetTime  time.Duration
-	AvgPeerTime time.Duration
-	CurrentItems int64
-	CurrentSize  int64
-	MaxSize     int64
+	Hits          int64
+	Misses        int64
+	Evictions     int64
+	PeerHits      int64
+	PeerMisses    int64
+	PeerErrors    int64
+	HitRate       float64
+	AvgGetTime    time.Duration
+	AvgPeerTime   time.Duration
+	CurrentItems  int64
+	CurrentSize   int64
+	MaxSize       int64
 }
 
 // String 返回可读的统计信息
@@ -166,6 +162,11 @@ func (s MetricsStats) String() string {
 func (s MetricsStats) format() string {
 	return fmt.Sprintf("Hits: %d, Misses: %d, HitRate: %.2f%%, Items: %d, Size: %d/%d bytes", 
 		s.Hits, s.Misses, s.HitRate*100, s.CurrentItems, s.CurrentSize, s.MaxSize)
+}
+
+// ToJSON 返回JSON格式的统计信息
+func (s MetricsStats) ToJSON() ([]byte, error) {
+	return json.MarshalIndent(s, "", "  ")
 }
 
 // InstrumentedGroup 带监控的缓存组
@@ -191,6 +192,8 @@ func (ig *InstrumentedGroup) Get(key string) (ByteView, error) {
 	value, err := ig.Group.Get(key)
 	
 	duration := time.Since(start)
+	
+	// 记录耗时
 	ig.metrics.RecordGetTime(duration)
 	
 	if err != nil {
@@ -209,50 +212,47 @@ func (ig *InstrumentedGroup) GetStats() MetricsStats {
 
 // ResetStats 重置统计信息
 func (ig *InstrumentedGroup) ResetStats() {
-	// 这里需要实现重置逻辑
-	// 由于Metrics是私有的，我们需要添加重置方法
+	ig.metrics.ResetStats()
 }
 
-// HTTP handler for metrics
+// UpdateSize 更新缓存大小
+func (ig *InstrumentedGroup) UpdateSize(items, size int64) {
+	ig.metrics.UpdateSize(items, size)
+}
+
+// ServeMetrics HTTP handler for metrics
 func (ig *InstrumentedGroup) ServeMetrics(w http.ResponseWriter, r *http.Request) {
 	stats := ig.GetStats()
 	
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	
+	if r.URL.Query().Get("pretty") == "1" {
+		json.NewEncoder(w).Encode(stats)
+	} else {
+		jsonBytes, _ := stats.ToJSON(); w.Write(jsonBytes)
+	}
 }
 
-// Prometheus metrics (optional) - 需要安装prometheus客户端库
-/*
-var (
-	promHits = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "cache_hits_total",
-			Help: "Total number of cache hits",
-		},
-		[]string{"cache"},
-	)
+// ServePrometheus 返回 Prometheus 格式的指标
+func (ig *InstrumentedGroup) ServePrometheus(w http.ResponseWriter, r *http.Request) {
+	stats := ig.GetStats()
 	
-	promMisses = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "cache_misses_total",
-			Help: "Total number of cache misses",
-		},
-		[]string{"cache"},
-	)
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	
-	promSize = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "cache_size_bytes",
-			Help: "Current cache size in bytes",
-		},
-		[]string{"cache"},
-	)
-)
-
-func init() {
-	// 注册Prometheus指标
-	prometheus.MustRegister(promHits)
-	prometheus.MustRegister(promMisses)
-	prometheus.MustRegister(promSize)
+	// Prometheus 格式
+	fmt.Fprintf(w, "# HELP cache_hits_total Total number of cache hits\n")
+	fmt.Fprintf(w, "# TYPE cache_hits_total counter\n")
+	fmt.Fprintf(w, "cache_hits_total{name=\"%s\"} %d\n\n", ig.Group.name, stats.Hits)
+	
+	fmt.Fprintf(w, "# HELP cache_misses_total Total number of cache misses\n")
+	fmt.Fprintf(w, "# TYPE cache_misses_total counter\n")
+	fmt.Fprintf(w, "cache_misses_total{name=\"%s\"} %d\n\n", ig.Group.name, stats.Misses)
+	
+	fmt.Fprintf(w, "# HELP cache_items Current number of items in cache\n")
+	fmt.Fprintf(w, "# TYPE cache_items gauge\n")
+	fmt.Fprintf(w, "cache_items{name=\"%s\"} %d\n\n", ig.Group.name, stats.CurrentItems)
+	
+	fmt.Fprintf(w, "# HELP cache_size_bytes Current cache size in bytes\n")
+	fmt.Fprintf(w, "# TYPE cache_size_bytes gauge\n")
+	fmt.Fprintf(w, "cache_size_bytes{name=\"%s\"} %d\n", ig.Group.name, stats.CurrentSize)
 }
-*/

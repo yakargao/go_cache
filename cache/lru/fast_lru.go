@@ -1,16 +1,24 @@
-// 高性能LRU实现 - 对标Redis/Memcached
+// 高性能LRU实现 - 优化版
 package lru
 
 import (
 	"container/list"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 // FastLRU 使用分片锁减少竞争
 type FastLRU struct {
 	shards []*lruShard
 	shardMask uint32
+	stats unsafe.Pointer
+}
+
+type FastLRUStats struct {
+	Hits   int64
+	Misses int64
+	Gets   int64
 }
 
 type lruShard struct {
@@ -25,10 +33,8 @@ type lruShard struct {
 // NewFastLRU 创建高性能LRU缓存
 func NewFastLRU(maxBytes int64, onEvicted func(string, Value), shardCount int) *FastLRU {
 	if shardCount <= 0 {
-		shardCount = 32 // 默认32个分片
+		shardCount = 32
 	}
-	
-	// 确保是2的幂，方便位运算
 	shardCount = nextPowerOfTwo(shardCount)
 	
 	shards := make([]*lruShard, shardCount)
@@ -43,14 +49,19 @@ func NewFastLRU(maxBytes int64, onEvicted func(string, Value), shardCount int) *
 		}
 	}
 	
+	stats := &FastLRUStats{}
+	
 	return &FastLRU{
 		shards:    shards,
 		shardMask: uint32(shardCount - 1),
+		stats:     unsafe.Pointer(stats),
 	}
 }
 
-// nextPowerOfTwo 返回大于等于n的最小的2的幂
 func nextPowerOfTwo(n int) int {
+	if n <= 0 {
+		return 1
+	}
 	n--
 	n |= n >> 1
 	n |= n >> 2
@@ -61,14 +72,11 @@ func nextPowerOfTwo(n int) int {
 	return n
 }
 
-// getShard 根据key获取对应的分片
 func (f *FastLRU) getShard(key string) *lruShard {
-	// 使用快速哈希函数
 	hash := fastHash(key)
 	return f.shards[hash & f.shardMask]
 }
 
-// fastHash 简单的快速哈希函数
 func fastHash(s string) uint32 {
 	var h uint32 = 2166136261
 	for i := 0; i < len(s); i++ {
@@ -78,25 +86,34 @@ func fastHash(s string) uint32 {
 	return h
 }
 
-// Get 获取缓存值
+// Get 获取缓存值 - 优化：原子统计
 func (f *FastLRU) Get(key string) (value Value, ok bool) {
+	atomic.AddInt64(&(*FastLRUStats)(f.stats).Gets, 1)
+	
 	shard := f.getShard(key)
 	shard.mu.RLock()
-	defer shard.mu.RUnlock()
 	
 	if ele, hit := shard.cache[key]; hit {
 		shard.ll.MoveToFront(ele)
 		kv := ele.Value.(*entry)
-		return kv.value, true
+		value = kv.value
+		ok = true
+		shard.mu.RUnlock()
+		atomic.AddInt64(&(*FastLRUStats)(f.stats).Hits, 1)
+		return
 	}
+	shard.mu.RUnlock()
+	atomic.AddInt64(&(*FastLRUStats)(f.stats).Misses, 1)
 	return
 }
 
-// Add 添加缓存项
+// Add 添加缓存项 - 优化：减少锁持有时间
 func (f *FastLRU) Add(key string, value Value) {
 	shard := f.getShard(key)
 	shard.mu.Lock()
-	defer shard.mu.Unlock()
+	
+	var evictedKey string
+	var evictedValue Value
 	
 	if ele, ok := shard.cache[key]; ok {
 		shard.ll.MoveToFront(ele)
@@ -104,32 +121,30 @@ func (f *FastLRU) Add(key string, value Value) {
 		shard.nBytes += int64(value.Len()) - int64(kv.value.Len())
 		kv.value = value
 	} else {
-		ele := shard.ll.PushFront(&Entry{key, value})
+		ele := shard.ll.PushFront(&entry{key: key, value: value})
 		shard.cache[key] = ele
 		shard.nBytes += int64(len(key)) + int64(value.Len())
 	}
 	
-	// 淘汰旧数据
 	for shard.maxBytes != 0 && shard.nBytes > shard.maxBytes {
-		f.removeOldest(shard)
-	}
-}
-
-// removeOldest 移除最久未使用的项
-func (f *FastLRU) removeOldest(shard *lruShard) {
-	ele := shard.ll.Back()
-	if ele != nil {
-		shard.ll.Remove(ele)
-		kv := ele.Value.(*entry)
-		delete(shard.cache, kv.Key)
-		shard.nBytes -= int64(len(kv.Key)) + int64(kv.value.Len())
-		if shard.OnEvicted != nil {
-			shard.OnEvicted(kv.Key, kv.value)
+		ele := shard.ll.Back()
+		if ele != nil {
+			shard.ll.Remove(ele)
+			kv := ele.Value.(*entry)
+			delete(shard.cache, kv.key)
+			shard.nBytes -= int64(len(kv.key)) + int64(kv.value.Len())
+			evictedKey = kv.key
+			evictedValue = kv.value
 		}
 	}
+	
+	shard.mu.Unlock()
+	
+	if evictedKey != "" && shard.OnEvicted != nil {
+		shard.OnEvicted(evictedKey, evictedValue)
+	}
 }
 
-// Len 返回缓存项数量
 func (f *FastLRU) Len() int {
 	total := 0
 	for _, shard := range f.shards {
@@ -140,7 +155,6 @@ func (f *FastLRU) Len() int {
 	return total
 }
 
-// Clear 清空缓存
 func (f *FastLRU) Clear() {
 	for _, shard := range f.shards {
 		shard.mu.Lock()
@@ -151,24 +165,51 @@ func (f *FastLRU) Clear() {
 	}
 }
 
-// Stats 返回缓存统计信息
 type CacheStats struct {
-	Items      int
+	Items      int64
 	SizeBytes  int64
 	ShardCount int
+	Gets       int64
+	Hits       int64
+	Misses     int64
+	HitRate    float64
 }
 
 func (f *FastLRU) Stats() CacheStats {
-	stats := CacheStats{
+	stats := (*FastLRUStats)(f.stats)
+	
+	gets := atomic.LoadInt64(&stats.Gets)
+	hits := atomic.LoadInt64(&stats.Hits)
+	misses := atomic.LoadInt64(&stats.Misses)
+	
+	var hitRate float64
+	if gets > 0 {
+		hitRate = float64(hits) / float64(gets)
+	}
+	
+	totalItems := int64(0)
+	totalSize := int64(0)
+	for _, s := range f.shards {
+		s.mu.RLock()
+		totalItems += int64(s.ll.Len())
+		totalSize += s.nBytes
+		s.mu.RUnlock()
+	}
+	
+	return CacheStats{
 		ShardCount: len(f.shards),
+		Gets:       gets,
+		Hits:       hits,
+		Misses:     misses,
+		HitRate:    hitRate,
+		Items:      totalItems,
+		SizeBytes:  totalSize,
 	}
-	
-	for _, shard := range f.shards {
-		shard.mu.RLock()
-		stats.Items += shard.ll.Len()
-		stats.SizeBytes += shard.nBytes
-		shard.mu.RUnlock()
-	}
-	
-	return stats
+}
+
+func (f *FastLRU) ResetStats() {
+	stats := (*FastLRUStats)(f.stats)
+	atomic.StoreInt64(&stats.Gets, 0)
+	atomic.StoreInt64(&stats.Hits, 0)
+	atomic.StoreInt64(&stats.Misses, 0)
 }
