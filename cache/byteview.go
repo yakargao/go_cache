@@ -9,6 +9,11 @@ type ByteView struct {
 	b []byte
 }
 
+// NewByteView 创建新的ByteView
+func NewByteView(b []byte) ByteView {
+	return ByteView{b: cloneBytes(b)}
+}
+
 // Len 返回byteView长度,实现value接口
 func (v ByteView) Len() int {
 	return len(v.b)
