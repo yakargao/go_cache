@@ -39,7 +39,7 @@ go_cache/
 │   │   ├── rdb.go             # RDB 快照
 │   │   ├── aof.go            # AOF 日志
 │   │   └── manager.go        # 持久化管理器
-│   ├── singleflight/          # 单飞模式
+│   ├── singleflight/          # 聚合
 │   ├── consistenthash/        # 一致性哈希
 │   ├── pool.go               # 内存池
 │   ├── ttl.go                # TTL 支持
